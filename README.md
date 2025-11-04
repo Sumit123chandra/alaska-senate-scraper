@@ -198,7 +198,3 @@ java -cp target/classes AlaskaSenateScraperSelenium
 **Generated File:** `alaska_senators.json`
 **Scraped Records:** 20 senators
 **Execution Time:** ~25 seconds (average)
-
----
-
-```
