@@ -13,20 +13,16 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Alaska State Senate Web Scraper
  * Scrapes senator information from https://akleg.gov/senate.php
- * 
- * Required Dependencies (Maven):
- * - selenium-java (4.x)
- * - gson (2.x)
- * - ChromeDriver executable in system PATH
  */
 public class AlaskaSenateScraperSelenium {
 
-    // Data model for Senator information
     static class Senator {
         private String name;
         private String title;
@@ -43,16 +39,21 @@ public class AlaskaSenateScraperSelenium {
         private String fax;
         private String email;
 
-        // Constructor
         public Senator() {
             this.title = "Senator";
             this.type = "State Senator";
             this.country = "USA";
-            this.dob = ""; // DOB not available on page
+            this.dob = "";
         }
 
-        // Getters and Setters
-        public void setName(String name) { this.name = name; }
+        public void setName(String name) { 
+            // Clean the name - only take the first line
+            if (name != null && name.contains("\n")) {
+                this.name = name.split("\n")[0].trim();
+            } else {
+                this.name = name;
+            }
+        }
         public void setParty(String party) { this.party = party; }
         public void setProfile(String profile) { this.profile = profile; }
         public void setUrl(String url) { this.url = url; }
@@ -62,14 +63,12 @@ public class AlaskaSenateScraperSelenium {
         public void setTollFree(String tollFree) { this.tollFree = tollFree; }
         public void setFax(String fax) { this.fax = fax; }
         public void setEmail(String email) { this.email = email; }
+        
+        public String getName() { return name; }
 
         @Override
         public String toString() {
-            return "Senator{" +
-                    "name='" + name + '\'' +
-                    ", party='" + party + '\'' +
-                    ", district='" + district + '\'' +
-                    '}';
+            return "Senator{name='" + name + "', party='" + party + "', district='" + district + "'}";
         }
     }
 
@@ -80,129 +79,146 @@ public class AlaskaSenateScraperSelenium {
         System.out.println("Target URL: https://akleg.gov/senate.php\n");
 
         WebDriver driver = null;
-        List<Senator> senators = new ArrayList<>();
+        Map<String, Senator> senatorsMap = new HashMap<>(); // Use map to avoid duplicates
 
         try {
-            // Setup WebDriverManager (automatically downloads ChromeDriver)
             WebDriverManager.chromedriver().setup();
             
-            // Setup Chrome options
             ChromeOptions options = new ChromeOptions();
-            options.addArguments("--headless"); // Run in background
+            options.addArguments("--headless");
             options.addArguments("--no-sandbox");
             options.addArguments("--disable-dev-shm-usage");
             options.addArguments("--disable-gpu");
+            options.addArguments("--window-size=1920,1080");
             
-            // Initialize WebDriver
             driver = new ChromeDriver(options);
-            WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(10));
+            WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(15));
             
-            // Navigate to the page
             System.out.println("Loading webpage...");
             driver.get("https://akleg.gov/senate.php");
             
-            // Wait for page to load
             wait.until(ExpectedConditions.presenceOfElementLocated(By.tagName("body")));
-            Thread.sleep(2000); // Additional wait for dynamic content
+            Thread.sleep(3000);
             
             System.out.println("Page loaded successfully!\n");
-
-            // Find all senator containers
-            // The senators are in divs with class that contains member info
-            // List<WebElement> senatorElements = driver.findElements(By.cssSelector("div.col-sm-4"));
-            List<WebElement> senatorElements = driver.findElements(By.xpath("//a[contains(@href, 'Member/Detail')]/ancestor::div[2]"));
-
-            System.out.println("Found " + senatorElements.size() + " potential senator entries");
+            
+            // Find all senator links
+            List<WebElement> senatorLinks = driver.findElements(By.cssSelector("a[href*='Member/Detail']"));
+            System.out.println("Found " + senatorLinks.size() + " senator links");
             System.out.println("Extracting data...\n");
             
-            
-            int count = 0;
-            for (WebElement element : senatorElements) {
-                Senator senator = new Senator();
-                String senatorName = ""; // Temporary storage for the reliable name
-
+            for (WebElement link : senatorLinks) {
                 try {
-                    // 1. Check if this row contains the senator name link (reliable check)
-                    List<WebElement> nameLinks = element.findElements(By.cssSelector("a[href*='Member/Detail']"));
+                    String rawName = link.getText().trim();
                     
-                    if (nameLinks.isEmpty()) {
-                        continue; // Skip if no senator link found
+                    // Skip empty or very short names
+                    if (rawName.isEmpty() || rawName.length() < 3) {
+                        continue;
                     }
                     
-                    // 2. Extract Name and Profile URL ONLY from the link
-                    WebElement nameLink = nameLinks.get(0);
-                    senatorName = nameLink.getText().trim(); // Store the reliable name
-                    senator.setProfile(nameLink.getAttribute("href"));
-                    senator.setUrl(nameLink.getAttribute("href"));
+                    // Clean the name - only take first line (actual name)
+                    String cleanName = rawName.split("\n")[0].trim();
                     
-// 3. Extract other fields from the text content of the parent element
-// 3. Extract other fields from text content by looking for keywords
-String elementText = element.getText();
-String[] lines = elementText.split("\n");
-
-for (String line : lines) { // Using a simpler for-each loop
-    String trimmedLine = line.trim();
-    
-    // Check for labeled fields using contains()
-    if (trimmedLine.contains("Party:")) {
-        // Party can be extracted from a single line
-        senator.setParty(trimmedLine.substring(trimmedLine.indexOf("Party:") + 6).trim());
-    } else if (trimmedLine.contains("District:")) {
-        // District can be extracted from a single line
-        String dist = trimmedLine.substring(trimmedLine.indexOf("District:") + 9).trim();
-        senator.setDistrict("District " + dist);
-    } else if (trimmedLine.contains("City:")) {
-        // City can be extracted from a single line
-        senator.setCity(trimmedLine.substring(trimmedLine.indexOf("City:") + 5).trim());
-    } else if (trimmedLine.contains("Phone:")) {
-        senator.setPhone(trimmedLine.substring(trimmedLine.indexOf("Phone:") + 6).trim());
-    } else if (trimmedLine.contains("Toll-Free:")) {
-        senator.setTollFree(trimmedLine.substring(trimmedLine.indexOf("Toll-Free:") + 10).trim());
-    } else if (trimmedLine.contains("Fax:")) {
-        senator.setFax(trimmedLine.substring(trimmedLine.indexOf("Fax:") + 4).trim());
-    }
-}
-                    
-                    // 4. Extract email if available
-                    List<WebElement> emailLinks = element.findElements(By.cssSelector("a[href^='/cdn-cgi/l/email-protection']"));
-                    if (!emailLinks.isEmpty()) {
-                        senator.setEmail("Available on website (email protected)");
+                    // Skip if already processed
+                    if (senatorsMap.containsKey(cleanName)) {
+                        continue;
                     }
                     
-                    // 5. FINALLY, set the clean name and add to the list
-                    senator.setName(senatorName);
+                    Senator senator = new Senator();
+                    senator.setName(cleanName);
+                    senator.setProfile(link.getAttribute("href"));
+                    senator.setUrl(link.getAttribute("href"));
                     
-                    if (senator.name != null && !senator.name.isEmpty() && senator.district != null) {
-                        senators.add(senator);
-                        count++;
+                    // Find parent container with full info
+                    WebElement parent = link;
+                    for (int i = 0; i < 5; i++) {
+                        try {
+                            parent = parent.findElement(By.xpath(".."));
+                            String parentText = parent.getText();
+                            if (parentText.contains("Party:") && parentText.contains("District:")) {
+                                break;
+                            }
+                        } catch (Exception e) {
+                            break;
+                        }
+                    }
+                    
+                    // Extract data from parent
+                    String fullText = parent.getText();
+                    String[] lines = fullText.split("\n");
+                    
+                    for (int i = 0; i < lines.length; i++) {
+                        String line = lines[i].trim();
+                        
+                        if (line.equals("City:") && i + 1 < lines.length) {
+                            String value = lines[i + 1].trim();
+                            if (!value.isEmpty() && !value.equals("View More")) {
+                                senator.setCity(value);
+                            }
+                        } else if (line.equals("Party:") && i + 1 < lines.length) {
+                            senator.setParty(lines[i + 1].trim());
+                        } else if (line.equals("District:") && i + 1 < lines.length) {
+                            senator.setDistrict("District " + lines[i + 1].trim());
+                        } else if (line.equals("Phone:") && i + 1 < lines.length) {
+                            String value = lines[i + 1].trim();
+                            if (!value.isEmpty() && !value.equals("View More") && !value.equals("Fax:")) {
+                                senator.setPhone(value);
+                            }
+                        } else if (line.equals("Toll-Free:") && i + 1 < lines.length) {
+                            String value = lines[i + 1].trim();
+                            if (!value.isEmpty() && !value.equals("View More") && !value.equals("Fax:")) {
+                                senator.setTollFree(value);
+                            }
+                        } else if (line.equals("Fax:") && i + 1 < lines.length) {
+                            String value = lines[i + 1].trim();
+                            if (!value.isEmpty() && !value.equals("View More")) {
+                                senator.setFax(value);
+                            }
+                        }
+                    }
+                    
+                    // Check for email
+                    try {
+                        List<WebElement> emailLinks = parent.findElements(By.cssSelector("a[href*='email']"));
+                        if (!emailLinks.isEmpty()) {
+                            senator.setEmail("Available on website (email protected)");
+                        }
+                    } catch (Exception e) {
+                        // No email
+                    }
+                    
+                    // Add if we have party info (indicates valid senator data)
+                    if (senator.party != null && !senator.party.isEmpty()) {
+                        senatorsMap.put(cleanName, senator);
                         System.out.println("✓ Extracted: " + senator);
                     }
-                                    
+                    
                 } catch (Exception e) {
-                    // Print the error for debugging, then skip
-                    System.err.println("Error processing element: " + e.getMessage());
                     continue;
                 }
             }
             
+            // Convert map to list
+            List<Senator> senators = new ArrayList<>(senatorsMap.values());
             
             System.out.println("\n=== Extraction Complete ===");
-            System.out.println("Total senators extracted: " + count);
+            System.out.println("Total unique senators extracted: " + senators.size());
             
-            // Write to JSON file
-            writeToJson(senators);
-
+            if (senators.size() > 0) {
+                writeToJson(senators);
+            } else {
+                System.out.println("\nWARNING: No senators were extracted!");
+            }
             
-} catch (Exception e) {
-System.err.println("Error during scraping: " + e.getMessage());
-e.printStackTrace();
-} finally {
-if (driver != null) {
-    driver.quit();
-    System.out.println("\nBrowser closed.");
-}
-}
-         
+        } catch (Exception e) {
+            System.err.println("Error during scraping: " + e.getMessage());
+            e.printStackTrace();
+        } finally {
+            if (driver != null) {
+                driver.quit();
+                System.out.println("\nBrowser closed.");
+            }
+        }
         
         long endTime = System.currentTimeMillis();
         long duration = (endTime - startTime) / 1000;
@@ -212,9 +228,6 @@ if (driver != null) {
         System.out.println("Output file: alaska_senators.json");
     }
 
-    /**
-     * Write senator data to JSON file
-     */
     private static void writeToJson(List<Senator> senators) {
         try {
             Gson gson = new GsonBuilder().setPrettyPrinting().create();
@@ -225,8 +238,13 @@ if (driver != null) {
             writer.close();
             
             System.out.println("\n✓ JSON file created successfully: alaska_senators.json");
-            System.out.println("Sample output:");
-            System.out.println(json.substring(0, Math.min(500, json.length())) + "...");
+            System.out.println("\nFirst senator in JSON:");
+            
+            // Show first senator as sample
+            if (!senators.isEmpty()) {
+                String firstSenator = gson.toJson(senators.get(0));
+                System.out.println(firstSenator);
+            }
             
         } catch (IOException e) {
             System.err.println("Error writing JSON file: " + e.getMessage());
